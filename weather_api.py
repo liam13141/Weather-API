@@ -1,9 +1,10 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 import requests, datetime
+import os
 
-API_KEY = "3dea6ae1817cf94ce90732907a006e3f"
-AUTH_CODE = "10292051924712"  # ✅ Required authorization value
+API_KEY = os.getenv("OPENWEATHER_API_KEY")
+AUTH_CODE = os.getenv("AUTH_CODE")
 
 app = FastAPI(title="WeatherStyle Pro API 🌦️", description="Protected JSON weather API")
 
