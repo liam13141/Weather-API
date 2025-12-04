@@ -7,7 +7,7 @@ AUTH_CODE = os.getenv("AUTH_CODE")
 
 app = FastAPI(
     title="WeatherStyle PRO GOD MODE API 🌎⚡",
-    description="Ultra-expanded weather API: AQI, UV, alerts, radar, NASA, NOAA, pollen, hurricanes, analytics."
+    description="Ultra-expanded weather API with full compatibility for WeatherStyle Pro Ultra++ HTML"
 )
 
 app.add_middleware(
@@ -30,126 +30,69 @@ ICON_MAP = {
 }
 
 # --------------------------
-# UTILITY HELPERS
+# Helper functions
 # --------------------------
 def uv_advice(uv):
-    if uv < 3: return "🟢 Low risk — enjoy the outdoors."
-    if uv < 6: return "🟡 Moderate — sunscreen advised."
-    if uv < 8: return "🟠 High — reduce midday exposure."
-    if uv < 11: return "🔴 Very high — seek shade."
-    return "🟣 Extreme — avoid going outside."
+    if uv < 3: return "Low risk"
+    if uv < 6: return "Moderate — sunscreen advised"
+    if uv < 8: return "High — reduce exposure"
+    if uv < 11: return "Very high — seek shade"
+    return "Extreme — avoid sun"
 
 def frostbite_time(temp_c, wind_kmh):
-    # OSHA wind chill chart estimation
     wind_ms = wind_kmh / 3.6
-    chill = 13.12 + 0.6215*temp_c - 11.37*(wind_ms**0.16) + 0.3965*temp_c*(wind_ms**0.16)
-    if chill > -10: return "No frostbite risk."
-    if chill > -20: return "Risk in 30+ minutes."
-    if chill > -28: return "Risk in 10–30 minutes."
-    return "Severe risk in <10 minutes."
+    chill = 13.12 + 0.6215 * temp_c - 11.37 * (wind_ms**0.16) + 0.3965 * temp_c * (wind_ms**0.16)
+    if chill > -10: return "No frostbite risk"
+    if chill > -20: return "Risk in 30+ minutes"
+    if chill > -28: return "Risk in 10–30 minutes"
+    return "Severe risk < 10 min"
 
-def heatstroke_risk(temp_c, humidity):
-    # simple heat index approximation
-    if temp_c >= 40: return "🔥 Extremely high — stay indoors."
-    if temp_c >= 34: return "🔥 Danger — heavy activity risky."
-    if temp_c >= 30: return "🥵 High — stay hydrated."
-    return "🟢 Normal risk."
+def heatstroke_risk(temp, humidity):
+    if temp >= 40: return "Extreme"
+    if temp >= 34: return "Danger"
+    if temp >= 30: return "High risk"
+    return "Low"
 
 def fire_danger(temp, humidity, wind):
     score = temp * 0.4 + wind * 0.3 - humidity * 0.2
-    if score < 10: return "🟢 Low"
-    if score < 20: return "🟡 Moderate"
-    if score < 35: return "🟠 High"
-    return "🔴 Extreme"
+    if score < 10: return "Low"
+    if score < 20: return "Moderate"
+    if score < 35: return "High"
+    return "Extreme"
 
-def mood_color(main):
-    return {
-        "Clear": "#FFD300",
-        "Clouds": "#C7C7C7",
-        "Rain": "#4A90E2",
-        "Snow": "#E0F7FF",
-        "Thunderstorm": "#5C2E91",
-        "Mist": "#A8A8A8"
-    }.get(main, "#FFFFFF")
+def radar_frames():
+    info = requests.get("https://api.rainviewer.com/public/weather-maps.json").json()
+    frames = []
+    for f in info["radar"]["past"]:
+        frames.append(f"https://tilecache.rainviewer.com/v2/radar/{f['path']}/256/6/33/21/2/1_1.png")
+    return frames
 
-def music_vibes(main):
-    return {
-        "Clear": ["Lofi beats", "Chill EDM", "Summer vibes"],
-        "Rain": ["Dark phonk", "Sad lofi", "Ambient"],
-        "Snow": ["Cozy piano", "Christmas jazz"],
-        "Clouds": ["Soft pop", "Relaxed trapsoul"],
-        "Thunderstorm": ["Phonk bass", "Trap metal"],
-    }.get(main, ["Ambient"])
-    
-# --------------------------
-# NOAA WEATHER ALERTS
-# --------------------------
-def get_noaa_alerts(lat, lon):
-    try:
-        url = f"https://api.weather.gov/alerts/active?point={lat},{lon}"
-        res = requests.get(url, headers={"User-Agent": "WeatherStylePro"})
-        data = res.json()
-        alerts = []
-        for a in data.get("features", []):
-            props = a["properties"]
-            alerts.append({
-                "event": props["event"],
-                "severity": props["severity"],
-                "headline": props["headline"],
-                "description": props["description"]
-            })
-        return alerts
-    except:
-        return []
+def build_forecast(raw):
+    days = {}
+    for entry in raw["list"]:
+        dt = datetime.datetime.fromtimestamp(entry["dt"])
+        day = dt.strftime("%a")
+        temp_min = entry["main"]["temp_min"]
+        temp_max = entry["main"]["temp_max"]
+        main = entry["weather"][0]["main"]
 
-# --------------------------
-# NASA POWER SOLAR API
-# --------------------------
-def nasa_solar(lat, lon):
-    try:
-        url = f"https://power.larc.nasa.gov/api/temporal/daily/point?parameters=ALLSKY_SFC_SW_DWN&community=RE&latitude={lat}&longitude={lon}&format=JSON"
-        res = requests.get(url).json()
-        d = list(res["properties"]["parameter"]["ALLSKY_SFC_SW_DWN"].values())[-1]
-        return round(d, 1)
-    except:
-        return None
+        if day not in days:
+            days[day] = {"min": temp_min, "max": temp_max, "main": main}
+        else:
+            days[day]["min"] = min(days[day]["min"], temp_min)
+            days[day]["max"] = max(days[day]["max"], temp_max)
 
-# --------------------------
-# HURRICANE TRACKER (NOAA NHC)
-# --------------------------
-def hurricane_data():
+    return days
+
+def hurricanes_data():
     try:
         res = requests.get("https://www.nhc.noaa.gov/CurrentStorms.json").json()
-        return res
+        return {"activeStorms": res}
     except:
-        return []
+        return {"activeStorms": []}
 
 # --------------------------
-# RADAR TILES (RAINVIEWER)
-# --------------------------
-def radar_tile():
-    info = requests.get("https://api.rainviewer.com/public/weather-maps.json").json()
-    files = info["radar"]["past"]
-    return {
-        "tiles": [
-            f"https://tilecache.rainviewer.com/v2/radar/{f['path']}/256/{z}/{x}/{y}/2/1_1.png"
-            for f in files for z in [6] for x in [33] for y in [21]
-        ],
-        "timestamps": [f["time"] for f in files]
-    }
-
-# --------------------------
-# HISTORICAL WEATHER (Open-Meteo)
-# --------------------------
-def historical(lat, lon):
-    url = f"https://archive-api.open-meteo.com/v1/archive?latitude={lat}&longitude={lon}&start_date=2024-01-01&end_date=2024-01-07&daily=temperature_2m_max,temperature_2m_min,precipitation_sum"
-    try:
-        return requests.get(url).json()
-    except:
-        return {}
-
-# --------------------------
-# MAIN WEATHER ENDPOINT
+# MAIN
 # --------------------------
 @app.get("/weather")
 def weather(city: str, authorization: str = None):
@@ -157,30 +100,22 @@ def weather(city: str, authorization: str = None):
     if authorization != AUTH_CODE:
         raise HTTPException(403, "Unauthorized")
 
-    current = requests.get(
+    # Core weather
+    cur = requests.get(
         f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={API_KEY}&units=metric"
     )
-
-    if current.status_code != 200:
+    if cur.status_code != 200:
         raise HTTPException(404, "City not found")
+    data = cur.json()
 
-    data = current.json()
     lat, lon = data["coord"]["lat"], data["coord"]["lon"]
 
-    # OpenWeather extras
-    forecast = requests.get(
+    # 5-day forecast
+    fore_raw = requests.get(
         f"https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={API_KEY}&units=metric"
     ).json()
 
-    main = data["weather"][0]["main"]
-    desc = data["weather"][0]["description"].title()
-    emoji = ICON_MAP.get(main, "🌍")
-
-    temp = data["main"]["temp"]
-    humidity = data["main"]["humidity"]
-    wind = round(data["wind"]["speed"] * 3.6, 1)
-
-    # Air Quality
+    # AQI
     aqi_raw = requests.get(
         f"http://api.openweathermap.org/data/2.5/air_pollution?lat={lat}&lon={lon}&appid={API_KEY}"
     ).json()
@@ -192,54 +127,38 @@ def weather(city: str, authorization: str = None):
     ).json()
     uv = uv_raw.get("value", 0)
 
-    # NOAA Alerts
-    alerts = get_noaa_alerts(lat, lon)
-
-    # NASA solar
-    solar = nasa_solar(lat, lon)
-
     # Radar
-    tiles = radar_tile()
+    radar = radar_frames()
 
     # Hurricanes
-    storms = hurricane_data()
+    storms = hurricanes_data()
 
-    # Historical data
-    hist = historical(lat, lon)
+    # Build forecast
+    forecast = build_forecast(fore_raw)
 
     return {
-        "city": city,
-        "emoji": emoji,
-        "main": main,
-        "description": desc,
-        "temperature_c": temp,
-        "humidity": humidity,
-        "wind_kmh": wind,
+        "city": data["name"],
+        "main": data["weather"][0]["main"],
+        "description": data["weather"][0]["description"].title(),
+        "temperature_c": data["main"]["temp"],
+        "humidity": data["main"]["humidity"],
+        "wind_kmh": round(data["wind"]["speed"] * 3.6, 1),
+
         "aqi": aqi,
+        "aqi_label": ["Good","Fair","Moderate","Poor","Very Poor"][aqi-1],
+
         "uv_index": uv,
         "uv_advice": uv_advice(uv),
-        "frostbite_time": frostbite_time(temp, wind),
-        "heatstroke_risk": heatstroke_risk(temp, humidity),
-        "fire_danger": fire_danger(temp, humidity, wind),
-        "music_vibes": music_vibes(main),
-        "theme_color": mood_color(main),
-        "travel": "⚠️ Caution" if main in ["Rain", "Snow"] else "✅ Safe",
-        "alerts": alerts,
-        "solar_kw_m2": solar,
-        "radar_tiles": tiles,
-        "hurricanes": storms,
-        "historical": hist
+
+        "frostbite_time": frostbite_time(data["main"]["temp"], round(data["wind"]["speed"] * 3.6, 1)),
+        "heatstroke_risk": heatstroke_risk(data["main"]["temp"], data["main"]["humidity"]),
+        "fire_danger": fire_danger(data["main"]["temp"], data["main"]["humidity"], round(data["wind"]["speed"] * 3.6, 1)),
+
+        "music_vibes": ["Chill","Relax","Rainy Vibes","Phonk","Storm Mode"],
+        "travel": "Safe" if data["weather"][0]["main"] == "Clear" else "Caution",
+
+        "forecast": forecast,
+        "radar_tiles": {"tiles": radar},
+
+        "hurricanes": storms
     }
-
-# --------------------------
-# MULTI CITY
-# --------------------------
-@app.get("/weather/multi")
-def multi(cities: str, authorization: str = None):
-
-    if authorization != AUTH_CODE:
-        raise HTTPException(403, "Unauthorized")
-
-    city_list = [c.strip() for c in cities.split(",")]
-
-    return {c: weather(c, authorization) for c in city_list}
